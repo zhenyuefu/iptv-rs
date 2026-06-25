@@ -40,6 +40,7 @@ pub struct Settings {
     pub ipv_type: String,
     pub ipv_type_prefer: Vec<String>,
     pub origin_type_prefer: Vec<String>,
+    pub iptv_source_prefer: Vec<String>,
     pub default_user_agent: String,
     pub http_proxy: Option<String>,
     pub logo_dir: PathBuf,
@@ -104,6 +105,7 @@ impl Settings {
                 .unwrap_or_else(|| "all".to_string()),
             ipv_type_prefer: get_list(&values, "ipv_type_prefer"),
             origin_type_prefer: get_list(&values, "origin_type_prefer"),
+            iptv_source_prefer: get_list(&values, "iptv_source_prefer"),
             default_user_agent: values
                 .get("default_user_agent")
                 .cloned()
@@ -188,6 +190,7 @@ fn apply_env_overrides(values: &mut HashMap<String, String>) {
                 | "ipv_type"
                 | "ipv_type_prefer"
                 | "origin_type_prefer"
+                | "iptv_source_prefer"
                 | "default_user_agent"
                 | "http_proxy"
                 | "logo_dir"

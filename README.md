@@ -73,6 +73,19 @@ https://example.com/live.m3u UA="My Player/1.0"
 https://example.com/epg.xml.gz UA="My EPG Fetcher/1.0"
 ```
 
+Live-source subscription entries also support IPTV source labels:
+
+```text
+https://example.com/live.m3u IPTV="home" UA="My Player/1.0"
+https://example.com/backup.txt IPTV=backup
+```
+
+Local files use their filename stem as the IPTV source label, for example
+`config/local/home.txt` is labeled `home`. Set `iptv_source_prefer` in
+`config/config.ini`, or request `/txt?iptv=home` and `/m3u?iptv=home`, to place
+matching source URLs first for each channel. The query parameter aliases
+`source` and `iptv_source` are also accepted.
+
 ## Logos
 
 Put logo files in `config/logo/`, for example:

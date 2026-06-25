@@ -14,12 +14,14 @@ pub fn load_local_sources(settings: &Settings) -> Result<Vec<ParsedChannel>> {
     if local_file.exists() {
         let text = std::fs::read_to_string(&local_file)
             .with_context(|| format!("failed to read {}", local_file.display()))?;
+        let source_label = source_label_from_path(&local_file);
         items.extend(parse_playlist(
             &text,
             local_file.to_string_lossy().as_ref(),
             Origin::Local,
             false,
             0,
+            source_label.as_deref(),
         )?);
     }
 
@@ -47,6 +49,7 @@ pub fn load_local_sources(settings: &Settings) -> Result<Vec<ParsedChannel>> {
                 Origin::Local,
                 false,
                 index + 1,
+                source_label_from_path(&path).as_deref(),
             )?);
         }
     }
@@ -60,9 +63,16 @@ pub fn parse_playlist(
     origin: Origin,
     whitelist: bool,
     source_order: usize,
+    iptv_source: Option<&str>,
 ) -> Result<Vec<ParsedChannel>> {
     if text.contains("#EXTM3U") || text.contains("#EXTINF") {
-        Ok(parse_m3u(text, origin, whitelist, source_order))
+        Ok(parse_m3u(
+            text,
+            origin,
+            whitelist,
+            source_order,
+            iptv_source,
+        ))
     } else {
         Ok(parse_txt(
             text,
@@ -70,6 +80,7 @@ pub fn parse_playlist(
             origin,
             whitelist,
             source_order,
+            iptv_source,
         ))
     }
 }
@@ -122,13 +133,7 @@ pub fn aggregate_channels(
 
     let mut channels: Vec<Channel> = map.into_values().collect();
     for channel in &mut channels {
-        channel.streams.sort_by(|a, b| {
-            stream_sort_key(a, settings)
-                .cmp(&stream_sort_key(b, settings))
-                .then_with(|| a.source_order.cmp(&b.source_order))
-                .then_with(|| a.url.cmp(&b.url))
-        });
-        channel.streams.truncate(settings.urls_limit);
+        sort_channel_streams(channel, settings);
     }
 
     if !settings.open_empty_category {
@@ -142,6 +147,21 @@ pub fn aggregate_channels(
             .then_with(|| a.name.cmp(&b.name))
     });
     channels
+}
+
+pub fn sort_channel_streams(channel: &mut Channel, settings: &Settings) {
+    channel.streams.sort_by(|a, b| {
+        stream_sort_key(a, settings)
+            .cmp(&stream_sort_key(b, settings))
+            .then_with(|| a.source_order.cmp(&b.source_order))
+            .then_with(|| a.url.cmp(&b.url))
+    });
+}
+
+pub fn limit_channel_streams(channels: &mut [Channel], settings: &Settings) {
+    for channel in channels {
+        channel.streams.truncate(settings.urls_limit);
+    }
 }
 
 fn inject_whitelist_urls(map: &mut ChannelMap, rules: &FilterRules) {
@@ -160,6 +180,7 @@ fn inject_whitelist_urls(map: &mut ChannelMap, rules: &FilterRules) {
                     origin: Origin::SubscribeWhitelist,
                     whitelist: true,
                     source_order: 0,
+                    iptv_source: None,
                 });
             }
         }
@@ -172,6 +193,7 @@ fn parse_txt(
     origin: Origin,
     whitelist: bool,
     source_order: usize,
+    iptv_source: Option<&str>,
 ) -> Vec<ParsedChannel> {
     let mut group: Option<String> = None;
     let mut order = 0;
@@ -190,8 +212,15 @@ fn parse_txt(
             }
         }
 
-        let parsed =
-            parse_txt_channel_line(line, group.clone(), origin, whitelist, order, source_order);
+        let parsed = parse_txt_channel_line(
+            line,
+            group.clone(),
+            origin,
+            whitelist,
+            order,
+            source_order,
+            iptv_source,
+        );
         if let Some(item) = parsed {
             items.push(item);
             order += 1;
@@ -221,6 +250,7 @@ fn parse_txt_channel_line(
     whitelist: bool,
     order: usize,
     source_order: usize,
+    iptv_source: Option<&str>,
 ) -> Option<ParsedChannel> {
     let (name, rest) = line.split_once(',')?;
     let name = name.trim();
@@ -239,6 +269,7 @@ fn parse_txt_channel_line(
             origin,
             whitelist,
             source_order,
+            iptv_source: iptv_source.map(ToString::to_string),
             ipv_type: infer_ipv_type(rest),
         }),
         order: order_for_origin(origin, order),
@@ -250,6 +281,7 @@ fn parse_m3u(
     origin: Origin,
     whitelist: bool,
     source_order: usize,
+    iptv_source: Option<&str>,
 ) -> Vec<ParsedChannel> {
     let mut items = Vec::new();
     let mut pending: Option<M3uInfo> = None;
@@ -283,6 +315,7 @@ fn parse_m3u(
                     origin,
                     whitelist,
                     source_order,
+                    iptv_source: iptv_source.map(ToString::to_string),
                     ipv_type: infer_ipv_type(line),
                 }),
                 order: order_for_origin(origin, order),
@@ -352,12 +385,25 @@ fn matches_ipv_type(settings: &Settings, ipv_type: IpvType) -> bool {
         || (ipv_type == IpvType::Unknown && settings.ipv_type == "ipv4")
 }
 
-fn stream_sort_key(stream: &Stream, settings: &Settings) -> (usize, usize, usize) {
+fn stream_sort_key(stream: &Stream, settings: &Settings) -> (usize, usize, usize, usize) {
     (
+        iptv_source_rank(stream, settings),
         usize::from(!stream.whitelist),
         origin_rank(stream.origin, settings),
         ipv_rank(stream.ipv_type, settings),
     )
+}
+
+fn iptv_source_rank(stream: &Stream, settings: &Settings) -> usize {
+    let Some(source) = &stream.iptv_source else {
+        return settings.iptv_source_prefer.len();
+    };
+    let source = source.to_ascii_lowercase();
+    settings
+        .iptv_source_prefer
+        .iter()
+        .position(|prefer| prefer == &source)
+        .unwrap_or(settings.iptv_source_prefer.len())
 }
 
 fn origin_rank(origin: Origin, settings: &Settings) -> usize {
@@ -414,6 +460,14 @@ fn order_for_origin(origin: Origin, order: usize) -> usize {
     offset + order
 }
 
+fn source_label_from_path(path: &std::path::Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::trim)
+        .filter(|stem| !stem.is_empty())
+        .map(ToString::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +480,7 @@ mod tests {
             Origin::Local,
             false,
             0,
+            None,
         );
 
         assert_eq!(items.len(), 2);
@@ -444,11 +499,16 @@ http://a/cctv1.m3u8
             Origin::Subscribe,
             false,
             0,
+            Some("sub-a"),
         );
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "CCTV-1");
         assert_eq!(items[0].tvg_id.as_deref(), Some("cctv1"));
         assert_eq!(items[0].logo.as_deref(), Some("http://logo"));
+        assert_eq!(
+            items[0].stream.as_ref().unwrap().iptv_source.as_deref(),
+            Some("sub-a")
+        );
     }
 }

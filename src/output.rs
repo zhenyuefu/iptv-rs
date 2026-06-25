@@ -12,7 +12,10 @@ pub fn write_txt(path: &Path, channels: &[Channel], settings: &Settings) -> Resu
     ensure_parent(path)?;
     let mut file =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
+    render_txt(&mut file, channels, settings)
+}
 
+pub fn render_txt<W: Write>(file: &mut W, channels: &[Channel], settings: &Settings) -> Result<()> {
     if settings.open_update_time && settings.update_time_position.eq_ignore_ascii_case("top") {
         writeln!(file, "更新时间,#genre#")?;
         writeln!(file, "更新时间,{}", update_time())?;
@@ -54,6 +57,10 @@ pub fn write_m3u(path: &Path, channels: &[Channel]) -> Result<()> {
     ensure_parent(path)?;
     let mut file =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
+    render_m3u(&mut file, channels)
+}
+
+pub fn render_m3u<W: Write>(file: &mut W, channels: &[Channel]) -> Result<()> {
     writeln!(file, "#EXTM3U")?;
 
     for channel in channels

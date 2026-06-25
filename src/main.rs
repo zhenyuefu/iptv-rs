@@ -2,6 +2,7 @@ mod config;
 mod epg;
 mod fetch;
 mod logo;
+mod metadata;
 mod models;
 mod output;
 mod playlist;
@@ -18,8 +19,11 @@ use crate::config::Settings;
 use crate::epg::EpgAggregator;
 use crate::fetch::HttpFetcher;
 use crate::logo::LogoResolver;
+use crate::metadata::channels_to_metadata_bytes;
 use crate::output::{write_m3u, write_txt};
-use crate::playlist::{aggregate_channels, load_local_sources, parse_playlist};
+use crate::playlist::{
+    aggregate_channels, limit_channel_streams, load_local_sources, parse_playlist,
+};
 use crate::rules::{AliasMatcher, FilterRules};
 use crate::source_list::{SourceSection, disable_source_entry, parse_source_list_file};
 
@@ -78,6 +82,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         models::Origin::Template,
         false,
         0,
+        None,
     )?;
     parsed_sources.extend(template);
 
@@ -95,6 +100,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
                 models::Origin::Local,
                 false,
                 0,
+                None,
             )?);
         }
     }
@@ -127,7 +133,14 @@ fn run_update(config_path: PathBuf) -> Result<()> {
                 SourceSection::Whitelist => models::Origin::SubscribeWhitelist,
                 SourceSection::Default => models::Origin::Subscribe,
             };
-            let parsed = parse_playlist(&body, &source.url, origin, source.is_whitelist(), index)?;
+            let parsed = parse_playlist(
+                &body,
+                &source.url,
+                origin,
+                source.is_whitelist(),
+                index,
+                source.iptv_source.as_deref(),
+            )?;
             if parsed.is_empty() && settings.open_auto_disable_source {
                 let _ = disable_source_entry(&subscribe_file, &source.url);
             }
@@ -138,6 +151,8 @@ fn run_update(config_path: PathBuf) -> Result<()> {
     let mut channels = aggregate_channels(parsed_sources, &settings, &aliases, &rules);
     let logo_resolver = LogoResolver::new(&settings);
     logo_resolver.apply(&mut channels);
+    let metadata_channels = channels.clone();
+    limit_channel_streams(&mut channels, &settings);
 
     let final_path = settings.resolve(&settings.final_file);
     write_txt(&final_path, &channels, &settings)?;
@@ -146,6 +161,10 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         let m3u_path = final_path.with_extension("m3u");
         write_m3u(&m3u_path, &channels)?;
     }
+    std::fs::write(
+        final_path.with_extension("metadata.tsv"),
+        channels_to_metadata_bytes(&metadata_channels),
+    )?;
 
     let epg_file = settings.resolve(&settings.epg_file);
     if settings.open_epg && epg_file.exists() {

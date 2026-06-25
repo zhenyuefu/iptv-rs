@@ -7,8 +7,12 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use url::form_urlencoded;
 
 use crate::config::Settings;
+use crate::metadata::channels_from_metadata_bytes;
+use crate::output::{render_m3u, render_txt};
+use crate::playlist::{limit_channel_streams, sort_channel_streams};
 
 type UpdateFn = fn(PathBuf) -> Result<()>;
 
@@ -74,7 +78,7 @@ fn handle_client(mut stream: TcpStream, settings: &Settings) -> Result<()> {
     }
 
     let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let Some(path) = parse_path(&request) else {
+    let Some(target) = parse_request_target(&request) else {
         return write_response(
             &mut stream,
             400,
@@ -83,7 +87,7 @@ fn handle_client(mut stream: TcpStream, settings: &Settings) -> Result<()> {
         );
     };
 
-    match resolve_route(&path, settings) {
+    match resolve_route(&target.path, settings, &target.iptv_source_prefer) {
         Route::Health => write_response(&mut stream, 200, "text/plain; charset=utf-8", b"ok"),
         Route::Info => write_response(
             &mut stream,
@@ -92,6 +96,9 @@ fn handle_client(mut stream: TcpStream, settings: &Settings) -> Result<()> {
             public_url_listing(settings).as_bytes(),
         ),
         Route::File(path) => write_file(&mut stream, &path),
+        Route::Generated(format, preferred_sources) => {
+            write_generated(&mut stream, settings, format, &preferred_sources)
+        }
         Route::NotFound => {
             write_response(&mut stream, 404, "text/plain; charset=utf-8", b"not found")
         }
@@ -102,10 +109,27 @@ enum Route {
     Health,
     Info,
     File(PathBuf),
+    Generated(GeneratedFormat, Vec<String>),
     NotFound,
 }
 
-fn resolve_route(path: &str, settings: &Settings) -> Route {
+#[derive(Debug, Clone, Copy)]
+enum GeneratedFormat {
+    Txt,
+    M3u,
+}
+
+fn resolve_route(path: &str, settings: &Settings, preferred_sources: &[String]) -> Route {
+    if !preferred_sources.is_empty() {
+        match path {
+            "/" | "/txt" | "/content" => {
+                return Route::Generated(GeneratedFormat::Txt, preferred_sources.to_vec());
+            }
+            "/m3u" => return Route::Generated(GeneratedFormat::M3u, preferred_sources.to_vec()),
+            _ => {}
+        }
+    }
+
     match path {
         "/health" => Route::Health,
         "/info" => Route::Info,
@@ -135,14 +159,37 @@ fn resolve_route(path: &str, settings: &Settings) -> Route {
     }
 }
 
-fn parse_path(request: &str) -> Option<String> {
+#[derive(Debug, Default)]
+struct RequestTarget {
+    path: String,
+    iptv_source_prefer: Vec<String>,
+}
+
+fn parse_request_target(request: &str) -> Option<RequestTarget> {
     let mut parts = request.lines().next()?.split_whitespace();
     let method = parts.next()?;
     if method != "GET" && method != "HEAD" {
         return None;
     }
     let raw_path = parts.next()?;
-    Some(raw_path.split('?').next().unwrap_or(raw_path).to_string())
+    let (path, query) = raw_path.split_once('?').unwrap_or((raw_path, ""));
+    Some(RequestTarget {
+        path: path.to_string(),
+        iptv_source_prefer: parse_iptv_source_prefer(query),
+    })
+}
+
+fn parse_iptv_source_prefer(query: &str) -> Vec<String> {
+    form_urlencoded::parse(query.as_bytes())
+        .filter(|(key, _)| matches!(key.as_ref(), "iptv" | "source" | "iptv_source"))
+        .flat_map(|(_, value)| {
+            value
+                .split(',')
+                .map(|part| part.trim().to_ascii_lowercase())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn write_file(stream: &mut TcpStream, path: &Path) -> Result<()> {
@@ -153,6 +200,48 @@ fn write_file(stream: &mut TcpStream, path: &Path) -> Result<()> {
         }
         Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
     }
+}
+
+fn write_generated(
+    stream: &mut TcpStream,
+    settings: &Settings,
+    format: GeneratedFormat,
+    preferred_sources: &[String],
+) -> Result<()> {
+    let metadata_path = settings
+        .resolve(&settings.final_file)
+        .with_extension("metadata.tsv");
+    let bytes = match fs::read(&metadata_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return write_response(stream, 404, "text/plain; charset=utf-8", b"not found");
+        }
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read {}", metadata_path.display()));
+        }
+    };
+
+    let mut channels = channels_from_metadata_bytes(&bytes)
+        .with_context(|| format!("failed to parse {}", metadata_path.display()))?;
+    let mut dynamic_settings = settings.clone();
+    dynamic_settings.iptv_source_prefer = preferred_sources.to_vec();
+    for channel in &mut channels {
+        sort_channel_streams(channel, &dynamic_settings);
+    }
+    limit_channel_streams(&mut channels, &dynamic_settings);
+
+    let mut body = Vec::new();
+    let content_type = match format {
+        GeneratedFormat::Txt => {
+            render_txt(&mut body, &channels, &dynamic_settings)?;
+            "text/plain; charset=utf-8"
+        }
+        GeneratedFormat::M3u => {
+            render_m3u(&mut body, &channels)?;
+            "audio/x-mpegurl; charset=utf-8"
+        }
+    };
+    write_response(stream, 200, content_type, &body)
 }
 
 fn write_response(
@@ -232,5 +321,13 @@ mod tests {
         assert!(safe_join(Path::new("/tmp/output"), "result.txt").is_some());
         assert!(safe_join(Path::new("/tmp/output"), "../config.ini").is_none());
         assert!(safe_join(Path::new("/tmp/output"), "/etc/passwd").is_none());
+    }
+
+    #[test]
+    fn parses_iptv_source_query() {
+        let target = parse_request_target("GET /txt?iptv=home,backup&x=1 HTTP/1.1").unwrap();
+
+        assert_eq!(target.path, "/txt");
+        assert_eq!(target.iptv_source_prefer, vec!["home", "backup"]);
     }
 }
