@@ -1,0 +1,6 @@
+# 订阅源列表，每行一个订阅地址
+# 支持设置 UA:
+# https://example.com/live.m3u UA="My Player/1.0"
+
+[WHITELIST]
+# 白名单订阅源会保留在同频道结果前部

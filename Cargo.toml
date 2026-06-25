@@ -1,0 +1,14 @@
+[package]
+name = "iptv-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Rust IPTV live-source and EPG aggregator inspired by Guovin/iptv-api"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "gzip", "rustls-tls"] }
+url = "2.5"

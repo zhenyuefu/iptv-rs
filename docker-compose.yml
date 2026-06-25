@@ -1,0 +1,21 @@
+services:
+  iptv-rs:
+    image: ${DOCKER_IMAGE:-zhenyuefu/iptv-rs:latest}
+    container_name: iptv-rs
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    ports:
+      - "80:8080"
+    volumes:
+      - /iptv-rs/config:/iptv-rs/config
+      - /iptv-rs/output:/iptv-rs/output
+    environment:
+      PUBLIC_SCHEME: "http"
+      PUBLIC_DOMAIN: "127.0.0.1"
+      PUBLIC_PORT: "80"
+      NGINX_HTTP_PORT: "8080"
+      UPDATE_STARTUP: "true"
+      UPDATE_INTERVAL: "12"
+      CDN_URL: ""
+      HTTP_PROXY: ""

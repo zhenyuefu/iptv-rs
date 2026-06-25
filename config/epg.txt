@@ -1,0 +1,3 @@
+# EPG 订阅源列表，每行一个 XML/XML.GZ 地址
+# 支持设置 UA:
+# https://example.com/epg.xml.gz UA="My EPG Fetcher/1.0"
