@@ -24,6 +24,26 @@ pub struct Stream {
     pub url: String,
     pub origin: Origin,
     pub whitelist: bool,
+    pub source_order: usize,
+    pub iptv_source: Option<String>,
+    pub ipv_type: IpvType,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum IpvType {
+    Ipv4,
+    Ipv6,
+    Unknown,
+}
+
+impl IpvType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IpvType::Ipv4 => "ipv4",
+            IpvType::Ipv6 => "ipv6",
+            IpvType::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
