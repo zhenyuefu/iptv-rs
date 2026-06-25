@@ -10,9 +10,10 @@ mod rules;
 mod service;
 mod source_list;
 
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::config::Settings;
@@ -52,12 +53,109 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    init_container_runtime()?;
+
+    let cli = Cli::parse_from(args_with_config_env());
 
     match cli.command {
         Command::Update { config } => run_update(config),
         Command::Serve { config } => service::serve(config, run_update),
     }
+}
+
+fn args_with_config_env() -> Vec<OsString> {
+    let mut args: Vec<OsString> = std::env::args_os().collect();
+    let Some(config_path) = std::env::var_os("CONFIG_PATH") else {
+        return args;
+    };
+    if args_has_config_flag(&args) {
+        return args;
+    }
+    let Some(command_index) = args
+        .iter()
+        .position(|arg| arg == OsStr::new("update") || arg == OsStr::new("serve"))
+    else {
+        return args;
+    };
+
+    args.insert(command_index + 1, OsString::from("--config"));
+    args.insert(command_index + 2, config_path);
+    args
+}
+
+fn args_has_config_flag(args: &[OsString]) -> bool {
+    args.iter().any(|arg| {
+        arg == OsStr::new("-c")
+            || arg == OsStr::new("--config")
+            || arg
+                .to_str()
+                .is_some_and(|value| value.starts_with("--config="))
+    })
+}
+
+fn init_container_runtime() -> Result<()> {
+    let Some(default_config_dir) = std::env::var_os("IPTV_RS_DEFAULT_CONFIG_DIR") else {
+        return Ok(());
+    };
+
+    let workdir = std::env::var_os("APP_WORKDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/iptv-rs"));
+    let config_dir = workdir.join("config");
+    let output_dir = workdir.join("output");
+
+    std::fs::create_dir_all(&config_dir)
+        .with_context(|| format!("failed to create {}", config_dir.display()))?;
+    std::fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+
+    copy_missing_config_entries(Path::new(&default_config_dir), &config_dir)
+}
+
+fn copy_missing_config_entries(source_dir: &Path, target_dir: &Path) -> Result<()> {
+    if !source_dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(source_dir)
+        .with_context(|| format!("failed to read {}", source_dir.display()))?
+    {
+        let entry = entry?;
+        let source = entry.path();
+        let target = target_dir.join(entry.file_name());
+        copy_missing_config_entry(&source, &target)?;
+    }
+
+    Ok(())
+}
+
+fn copy_missing_config_entry(source: &Path, target: &Path) -> Result<()> {
+    if target.exists() {
+        return Ok(());
+    }
+
+    let metadata = std::fs::metadata(source)
+        .with_context(|| format!("failed to inspect {}", source.display()))?;
+    if metadata.is_dir() {
+        std::fs::create_dir_all(target)
+            .with_context(|| format!("failed to create {}", target.display()))?;
+        for entry in std::fs::read_dir(source)
+            .with_context(|| format!("failed to read {}", source.display()))?
+        {
+            let entry = entry?;
+            copy_missing_config_entry(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        std::fs::copy(source, target).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 fn run_update(config_path: PathBuf) -> Result<()> {
