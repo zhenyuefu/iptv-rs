@@ -6,13 +6,21 @@ use anyhow::{Context, Result};
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub root: PathBuf,
+    pub open_update: bool,
     pub open_service: bool,
     pub open_local: bool,
     pub open_subscribe: bool,
+    pub open_auto_disable_source: bool,
+    pub open_history: bool,
+    pub open_unmatch_category: bool,
+    pub open_empty_category: bool,
+    pub open_update_time: bool,
+    pub open_url_info: bool,
     pub open_epg: bool,
     pub open_m3u_result: bool,
     pub update_startup: bool,
     pub update_interval: u64,
+    pub update_time_position: String,
     pub nginx_http_port: u16,
     pub public_scheme: String,
     pub public_domain: String,
@@ -22,10 +30,16 @@ pub struct Settings {
     pub local_dir: PathBuf,
     pub subscribe_file: PathBuf,
     pub epg_file: PathBuf,
+    pub alias_file: PathBuf,
+    pub blacklist_file: PathBuf,
+    pub whitelist_file: PathBuf,
     pub final_file: PathBuf,
     pub epg_output_file: PathBuf,
     pub urls_limit: usize,
     pub request_timeout: u64,
+    pub ipv_type: String,
+    pub ipv_type_prefer: Vec<String>,
+    pub origin_type_prefer: Vec<String>,
     pub default_user_agent: String,
     pub http_proxy: Option<String>,
     pub logo_dir: PathBuf,
@@ -44,13 +58,24 @@ impl Settings {
 
         Ok(Self {
             root,
+            open_update: get_bool(&values, "open_update", true),
             open_service: get_bool(&values, "open_service", true),
             open_local: get_bool(&values, "open_local", true),
             open_subscribe: get_bool(&values, "open_subscribe", true),
+            open_auto_disable_source: get_bool(&values, "open_auto_disable_source", true),
+            open_history: get_bool(&values, "open_history", true),
+            open_unmatch_category: get_bool(&values, "open_unmatch_category", false),
+            open_empty_category: get_bool(&values, "open_empty_category", false),
+            open_update_time: get_bool(&values, "open_update_time", true),
+            open_url_info: get_bool(&values, "open_url_info", false),
             open_epg: get_bool(&values, "open_epg", true),
             open_m3u_result: get_bool(&values, "open_m3u_result", true),
             update_startup: get_bool(&values, "update_startup", true),
             update_interval: get_u64(&values, "update_interval", 12),
+            update_time_position: values
+                .get("update_time_position")
+                .cloned()
+                .unwrap_or_else(|| "top".to_string()),
             nginx_http_port: get_u16(&values, "nginx_http_port", 8080),
             public_scheme: values
                 .get("public_scheme")
@@ -66,10 +91,19 @@ impl Settings {
             local_dir: get_path(&values, "local_dir", "config/local"),
             subscribe_file: get_path(&values, "subscribe_file", "config/subscribe.txt"),
             epg_file: get_path(&values, "epg_file", "config/epg.txt"),
+            alias_file: get_path(&values, "alias_file", "config/alias.txt"),
+            blacklist_file: get_path(&values, "blacklist_file", "config/blacklist.txt"),
+            whitelist_file: get_path(&values, "whitelist_file", "config/whitelist.txt"),
             final_file: get_path(&values, "final_file", "output/result.txt"),
             epg_output_file: get_path(&values, "epg_output_file", "output/epg/epg.xml"),
             urls_limit: get_usize(&values, "urls_limit", 5).max(1),
             request_timeout: get_u64(&values, "request_timeout", 10).max(1),
+            ipv_type: values
+                .get("ipv_type")
+                .map(|value| value.to_ascii_lowercase())
+                .unwrap_or_else(|| "all".to_string()),
+            ipv_type_prefer: get_list(&values, "ipv_type_prefer"),
+            origin_type_prefer: get_list(&values, "origin_type_prefer"),
             default_user_agent: values
                 .get("default_user_agent")
                 .cloned()
@@ -121,12 +155,20 @@ fn apply_env_overrides(values: &mut HashMap<String, String>) {
         if matches!(
             key.as_str(),
             "open_service"
+                | "open_update"
                 | "open_local"
                 | "open_subscribe"
+                | "open_auto_disable_source"
+                | "open_history"
+                | "open_unmatch_category"
+                | "open_empty_category"
+                | "open_update_time"
+                | "open_url_info"
                 | "open_epg"
                 | "open_m3u_result"
                 | "update_startup"
                 | "update_interval"
+                | "update_time_position"
                 | "nginx_http_port"
                 | "public_scheme"
                 | "public_domain"
@@ -136,10 +178,16 @@ fn apply_env_overrides(values: &mut HashMap<String, String>) {
                 | "local_dir"
                 | "subscribe_file"
                 | "epg_file"
+                | "alias_file"
+                | "blacklist_file"
+                | "whitelist_file"
                 | "final_file"
                 | "epg_output_file"
                 | "urls_limit"
                 | "request_timeout"
+                | "ipv_type"
+                | "ipv_type_prefer"
+                | "origin_type_prefer"
                 | "default_user_agent"
                 | "http_proxy"
                 | "logo_dir"
@@ -188,6 +236,19 @@ fn get_path(values: &HashMap<String, String>, key: &str, default: &str) -> PathB
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(default))
+}
+
+fn get_list(values: &HashMap<String, String>, key: &str) -> Vec<String> {
+    values
+        .get(key)
+        .map(|value| {
+            value
+                .split(',')
+                .map(|part| part.trim().to_ascii_lowercase())
+                .filter(|part| !part.is_empty() && part != "auto")
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn get_non_empty(values: &HashMap<String, String>, key: &str) -> Option<String> {

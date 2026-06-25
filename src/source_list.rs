@@ -28,6 +28,37 @@ pub fn parse_source_list_file(path: &Path) -> Result<Vec<SourceEntry>> {
     Ok(parse_source_list(&text))
 }
 
+pub fn disable_source_entry(path: &Path, url: &str) -> Result<bool> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read source list {}", path.display()))?;
+    let mut changed = false;
+    let mut lines = Vec::new();
+
+    for raw_line in text.lines() {
+        let trimmed = raw_line.trim();
+        if !changed && !trimmed.starts_with('#') {
+            let (candidate, _) = split_user_agent(trimmed);
+            if candidate == url {
+                lines.push(format!("#{raw_line}"));
+                changed = true;
+                continue;
+            }
+        }
+        lines.push(raw_line.to_string());
+    }
+
+    if changed {
+        let mut output = lines.join("\n");
+        if text.ends_with('\n') {
+            output.push('\n');
+        }
+        std::fs::write(path, output)
+            .with_context(|| format!("failed to update source list {}", path.display()))?;
+    }
+
+    Ok(changed)
+}
+
 pub fn parse_source_list(text: &str) -> Vec<SourceEntry> {
     let mut section = SourceSection::Default;
     let mut entries = Vec::new();
