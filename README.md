@@ -60,8 +60,7 @@ default, refreshes every `UPDATE_INTERVAL` hours, and serves generated output at
 - `config/alias.txt`: channel aliases. Entries prefixed with `re:` are regular expressions.
 - `config/blacklist.txt`: URL keyword blacklist.
 - `config/whitelist.txt`: exact or keyword URL whitelist.
-- `config/local.txt`: local live sources.
-- `config/local/`: additional local txt/m3u source files.
+- `config/local_sources.txt`: local live-source files with per-file options.
 - `config/subscribe.txt`: remote live-source subscriptions.
 - `config/epg.txt`: remote EPG XML/XML.GZ subscriptions.
 - `config/logo/`: local channel logos.
@@ -73,18 +72,26 @@ https://example.com/live.m3u UA="My Player/1.0"
 https://example.com/epg.xml.gz UA="My EPG Fetcher/1.0"
 ```
 
-Live-source subscription entries also support IPTV source labels:
+Live-source subscription entries and `config/local_sources.txt` entries also
+support IPTV source labels:
 
 ```text
-https://example.com/live.m3u IPTV="home" UA="My Player/1.0"
-https://example.com/backup.txt IPTV=backup
+https://example.com/live.m3u IPTV="sh-unicom" UA="My Player/1.0"
+config/local/sh-unicom.m3u IPTV="sh-unicom"
+/data/public.txt
+file:///data/zj-telecom.txt IPTV="zj-telecom"
 ```
 
-Local files use their filename stem as the IPTV source label, for example
-`config/local/home.txt` is labeled `home`. Set `iptv_source_prefer` in
-`config/config.ini`, or request `/txt?iptv=home` and `/m3u?iptv=home`, to place
-matching source URLs first for each channel. The query parameter aliases
-`source` and `iptv_source` are also accepted.
+An explicit `IPTV=` label means the source is an operator IPTV source and is
+only kept when it matches `iptv_source_filter`, for example
+`iptv_source_filter = sh-unicom`. Unlabeled ordinary internet sources are not
+filtered. Matching IPTV sources are placed first; if `iptv_source_prefer` is
+empty, `iptv_source_filter` is also used as the preferred order.
+
+Local live sources are loaded only from `config/local_sources.txt`; files under
+`config/local/` are not scanned automatically. Request `/txt?iptv=sh-unicom` or
+`/m3u?iptv=sh-unicom` to dynamically filter and prefer matching IPTV sources.
+The query parameter aliases `source` and `iptv_source` are also accepted.
 
 ## Logos
 

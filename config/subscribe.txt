@@ -1,5 +1,5 @@
 # 订阅源列表，每行一个订阅地址
-# 支持设置 UA 和 IPTV 源标签:
+# 支持设置 UA 和 IPTV 源标签。IPTV 标签表示运营商 IPTV 源，会按 iptv_source_filter 过滤:
 # https://example.com/live.m3u IPTV="home" UA="My Player/1.0"
 
 [WHITELIST]

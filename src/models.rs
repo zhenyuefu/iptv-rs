@@ -26,6 +26,7 @@ pub struct Stream {
     pub whitelist: bool,
     pub source_order: usize,
     pub iptv_source: Option<String>,
+    pub iptv_restricted: bool,
     pub ipv_type: IpvType,
 }
 
