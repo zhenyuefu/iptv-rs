@@ -11,8 +11,9 @@ use url::form_urlencoded;
 
 use crate::config::Settings;
 use crate::metadata::channels_from_metadata_bytes;
+use crate::models::Channel;
 use crate::output::{render_m3u, render_txt};
-use crate::playlist::{limit_channel_streams, sort_channel_streams};
+use crate::playlist::{apply_output_preferences, limit_channel_streams};
 
 type UpdateFn = fn(PathBuf) -> Result<()>;
 
@@ -223,12 +224,8 @@ fn write_generated(
 
     let mut channels = channels_from_metadata_bytes(&bytes)
         .with_context(|| format!("failed to parse {}", metadata_path.display()))?;
-    let mut dynamic_settings = settings.clone();
-    dynamic_settings.iptv_source_prefer = preferred_sources.to_vec();
-    for channel in &mut channels {
-        sort_channel_streams(channel, &dynamic_settings);
-    }
-    limit_channel_streams(&mut channels, &dynamic_settings);
+    let dynamic_settings = generated_settings(settings, preferred_sources);
+    prepare_generated_channels(&mut channels, &dynamic_settings);
 
     let mut body = Vec::new();
     let content_type = match format {
@@ -242,6 +239,18 @@ fn write_generated(
         }
     };
     write_response(stream, 200, content_type, &body)
+}
+
+fn generated_settings(settings: &Settings, preferred_sources: &[String]) -> Settings {
+    let mut dynamic_settings = settings.clone();
+    dynamic_settings.iptv_source_filter = preferred_sources.to_vec();
+    dynamic_settings.iptv_source_prefer = preferred_sources.to_vec();
+    dynamic_settings
+}
+
+fn prepare_generated_channels(channels: &mut Vec<Channel>, settings: &Settings) {
+    apply_output_preferences(channels, settings);
+    limit_channel_streams(channels, settings);
 }
 
 fn write_response(
@@ -315,6 +324,55 @@ fn safe_join(base: &Path, relative: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::{channels_from_metadata_bytes, channels_to_metadata_bytes};
+    use crate::models::{IpvType, Origin, Stream};
+
+    fn test_settings() -> Settings {
+        Settings {
+            root: PathBuf::from("."),
+            open_update: true,
+            open_service: true,
+            open_local: true,
+            open_subscribe: true,
+            open_auto_disable_source: true,
+            open_history: true,
+            open_unmatch_category: true,
+            open_empty_category: false,
+            open_update_time: true,
+            open_url_info: false,
+            open_epg: true,
+            open_m3u_result: true,
+            update_startup: true,
+            update_interval: 12,
+            update_time_position: "top".into(),
+            nginx_http_port: 8080,
+            public_scheme: "http".into(),
+            public_domain: "127.0.0.1".into(),
+            public_port: 80,
+            source_file: "config/demo.txt".into(),
+            local_source_list_file: "config/local_sources.txt".into(),
+            subscribe_file: "config/subscribe.txt".into(),
+            epg_file: "config/epg.txt".into(),
+            alias_file: "config/alias.txt".into(),
+            blacklist_file: "config/blacklist.txt".into(),
+            whitelist_file: "config/whitelist.txt".into(),
+            final_file: "output/result.txt".into(),
+            epg_output_file: "output/epg/epg.xml".into(),
+            urls_limit: 5,
+            request_timeout: 10,
+            ipv_type: "all".into(),
+            ipv_type_prefer: Vec::new(),
+            origin_type_prefer: Vec::new(),
+            iptv_source_prefer: Vec::new(),
+            iptv_source_filter: Vec::new(),
+            default_user_agent: "iptv-rs/0.1".into(),
+            http_proxy: None,
+            logo_dir: "config/logo".into(),
+            local_logo_base_url: None,
+            logo_url: None,
+            logo_type: "png".into(),
+        }
+    }
 
     #[test]
     fn rejects_path_traversal() {
@@ -329,5 +387,48 @@ mod tests {
 
         assert_eq!(target.path, "/txt");
         assert_eq!(target.iptv_source_prefer, vec!["home", "backup"]);
+    }
+
+    #[test]
+    fn generated_output_filters_restricted_iptv_sources_from_query() {
+        let channels = vec![Channel {
+            name: "CCTV-1".into(),
+            group: Some("央视".into()),
+            tvg_id: None,
+            logo: None,
+            streams: vec![
+                stream("http://zj.test/live.m3u8", Some("zj-telecom"), true),
+                stream("http://public.test/live.m3u8", None, false),
+                stream("http://sh.test/live.m3u8", Some("sh-unicom"), true),
+            ],
+            order: 1,
+        }];
+        let bytes = channels_to_metadata_bytes(&channels);
+        let mut decoded = channels_from_metadata_bytes(&bytes).unwrap();
+        let dynamic_settings = generated_settings(&test_settings(), &["sh-unicom".into()]);
+
+        prepare_generated_channels(&mut decoded, &dynamic_settings);
+
+        let urls: Vec<&str> = decoded[0]
+            .streams
+            .iter()
+            .map(|stream| stream.url.as_str())
+            .collect();
+        assert_eq!(
+            urls,
+            vec!["http://sh.test/live.m3u8", "http://public.test/live.m3u8"]
+        );
+    }
+
+    fn stream(url: &str, iptv_source: Option<&str>, iptv_restricted: bool) -> Stream {
+        Stream {
+            url: url.into(),
+            origin: Origin::Subscribe,
+            whitelist: false,
+            source_order: 0,
+            iptv_source: iptv_source.map(ToString::to_string),
+            iptv_restricted,
+            ipv_type: IpvType::Ipv4,
+        }
     }
 }

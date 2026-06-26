@@ -1,46 +1,28 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use url::Url;
 
 use crate::config::Settings;
 use crate::models::{Channel, ChannelMap, IpvType, Origin, ParsedChannel, Stream};
 use crate::rules::{AliasMatcher, FilterRules};
+use crate::source_list::{SourceEntry, parse_source_list_file};
 
 pub fn load_local_sources(settings: &Settings) -> Result<Vec<ParsedChannel>> {
     let mut items = Vec::new();
-    let local_file = settings.resolve(&settings.local_file);
-    if local_file.exists() {
-        let text = std::fs::read_to_string(&local_file)
-            .with_context(|| format!("failed to read {}", local_file.display()))?;
-        let source_label = source_label_from_path(&local_file);
-        items.extend(parse_playlist(
-            &text,
-            local_file.to_string_lossy().as_ref(),
-            Origin::Local,
-            false,
-            0,
-            source_label.as_deref(),
-        )?);
-    }
-
-    let local_dir = settings.resolve(&settings.local_dir);
-    if local_dir.is_dir() {
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(&local_dir)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file())
-            .filter(|path| {
-                path.extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "txt" | "m3u" | "m3u8"))
-                    .unwrap_or(false)
-            })
-            .collect();
-        paths.sort();
-
-        for (index, path) in paths.into_iter().enumerate() {
+    let local_source_list_file = settings.resolve(&settings.local_source_list_file);
+    if local_source_list_file.exists() {
+        let sources = parse_source_list_file(&local_source_list_file)?;
+        for (source_order, source) in sources
+            .into_iter()
+            .filter(|source| source.enabled)
+            .enumerate()
+        {
+            if !source_iptv_allowed(&source, settings) {
+                continue;
+            }
+            let path = resolve_local_source_path(settings, &source)?;
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
             items.extend(parse_playlist(
@@ -48,8 +30,9 @@ pub fn load_local_sources(settings: &Settings) -> Result<Vec<ParsedChannel>> {
                 path.to_string_lossy().as_ref(),
                 Origin::Local,
                 false,
-                index + 1,
-                source_label_from_path(&path).as_deref(),
+                source_order,
+                source.iptv_source.as_deref(),
+                source.iptv_restricted,
             )?);
         }
     }
@@ -64,6 +47,7 @@ pub fn parse_playlist(
     whitelist: bool,
     source_order: usize,
     iptv_source: Option<&str>,
+    iptv_restricted: bool,
 ) -> Result<Vec<ParsedChannel>> {
     if text.contains("#EXTM3U") || text.contains("#EXTINF") {
         Ok(parse_m3u(
@@ -72,6 +56,7 @@ pub fn parse_playlist(
             whitelist,
             source_order,
             iptv_source,
+            iptv_restricted,
         ))
     } else {
         Ok(parse_txt(
@@ -81,6 +66,7 @@ pub fn parse_playlist(
             whitelist,
             source_order,
             iptv_source,
+            iptv_restricted,
         ))
     }
 }
@@ -158,6 +144,18 @@ pub fn sort_channel_streams(channel: &mut Channel, settings: &Settings) {
     });
 }
 
+pub fn apply_output_preferences(channels: &mut Vec<Channel>, settings: &Settings) {
+    for channel in channels.iter_mut() {
+        channel
+            .streams
+            .retain(|stream| stream_allowed_by_iptv_filter(stream, settings));
+        sort_channel_streams(channel, settings);
+    }
+    if !settings.open_empty_category {
+        channels.retain(|channel| !channel.streams.is_empty());
+    }
+}
+
 pub fn limit_channel_streams(channels: &mut [Channel], settings: &Settings) {
     for channel in channels {
         channel.streams.truncate(settings.urls_limit);
@@ -181,6 +179,7 @@ fn inject_whitelist_urls(map: &mut ChannelMap, rules: &FilterRules) {
                     whitelist: true,
                     source_order: 0,
                     iptv_source: None,
+                    iptv_restricted: false,
                 });
             }
         }
@@ -194,6 +193,7 @@ fn parse_txt(
     whitelist: bool,
     source_order: usize,
     iptv_source: Option<&str>,
+    iptv_restricted: bool,
 ) -> Vec<ParsedChannel> {
     let mut group: Option<String> = None;
     let mut order = 0;
@@ -220,6 +220,7 @@ fn parse_txt(
             order,
             source_order,
             iptv_source,
+            iptv_restricted,
         );
         if let Some(item) = parsed {
             items.push(item);
@@ -251,6 +252,7 @@ fn parse_txt_channel_line(
     order: usize,
     source_order: usize,
     iptv_source: Option<&str>,
+    iptv_restricted: bool,
 ) -> Option<ParsedChannel> {
     let (name, rest) = line.split_once(',')?;
     let name = name.trim();
@@ -270,6 +272,7 @@ fn parse_txt_channel_line(
             whitelist,
             source_order,
             iptv_source: iptv_source.map(ToString::to_string),
+            iptv_restricted,
             ipv_type: infer_ipv_type(rest),
         }),
         order: order_for_origin(origin, order),
@@ -282,6 +285,7 @@ fn parse_m3u(
     whitelist: bool,
     source_order: usize,
     iptv_source: Option<&str>,
+    iptv_restricted: bool,
 ) -> Vec<ParsedChannel> {
     let mut items = Vec::new();
     let mut pending: Option<M3uInfo> = None;
@@ -316,6 +320,7 @@ fn parse_m3u(
                     whitelist,
                     source_order,
                     iptv_source: iptv_source.map(ToString::to_string),
+                    iptv_restricted,
                     ipv_type: infer_ipv_type(line),
                 }),
                 order: order_for_origin(origin, order),
@@ -383,6 +388,36 @@ fn matches_ipv_type(settings: &Settings, ipv_type: IpvType) -> bool {
     matches!(settings.ipv_type.as_str(), "all" | "")
         || settings.ipv_type == ipv_type.as_str()
         || (ipv_type == IpvType::Unknown && settings.ipv_type == "ipv4")
+}
+
+pub fn source_iptv_allowed(source: &SourceEntry, settings: &Settings) -> bool {
+    iptv_label_allowed(
+        source.iptv_source.as_deref(),
+        source.iptv_restricted,
+        settings,
+    )
+}
+
+fn stream_allowed_by_iptv_filter(stream: &Stream, settings: &Settings) -> bool {
+    iptv_label_allowed(
+        stream.iptv_source.as_deref(),
+        stream.iptv_restricted,
+        settings,
+    )
+}
+
+fn iptv_label_allowed(source: Option<&str>, restricted: bool, settings: &Settings) -> bool {
+    if !restricted || settings.iptv_source_filter.is_empty() {
+        return true;
+    }
+    let Some(source) = source else {
+        return false;
+    };
+    let source = source.to_ascii_lowercase();
+    settings
+        .iptv_source_filter
+        .iter()
+        .any(|allowed| allowed == &source)
 }
 
 fn stream_sort_key(stream: &Stream, settings: &Settings) -> (usize, usize, usize, usize) {
@@ -460,17 +495,70 @@ fn order_for_origin(origin: Origin, order: usize) -> usize {
     offset + order
 }
 
-fn source_label_from_path(path: &std::path::Path) -> Option<String> {
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(str::trim)
-        .filter(|stem| !stem.is_empty())
-        .map(ToString::to_string)
+fn resolve_local_source_path(settings: &Settings, source: &SourceEntry) -> Result<PathBuf> {
+    if source.url.starts_with("http://") || source.url.starts_with("https://") {
+        return Err(anyhow!(
+            "local source list entry must be a local path: {}",
+            source.url
+        ));
+    }
+    if let Some(path) = source.url.strip_prefix("file://") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(settings.resolve(Path::new(&source.url)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::{AliasMatcher, FilterRules};
+
+    fn test_settings(root: PathBuf) -> Settings {
+        Settings {
+            root,
+            open_update: true,
+            open_service: true,
+            open_local: true,
+            open_subscribe: true,
+            open_auto_disable_source: true,
+            open_history: true,
+            open_unmatch_category: true,
+            open_empty_category: false,
+            open_update_time: true,
+            open_url_info: false,
+            open_epg: true,
+            open_m3u_result: true,
+            update_startup: true,
+            update_interval: 12,
+            update_time_position: "top".into(),
+            nginx_http_port: 8080,
+            public_scheme: "http".into(),
+            public_domain: "127.0.0.1".into(),
+            public_port: 80,
+            source_file: "config/demo.txt".into(),
+            local_source_list_file: "config/local_sources.txt".into(),
+            subscribe_file: "config/subscribe.txt".into(),
+            epg_file: "config/epg.txt".into(),
+            alias_file: "config/alias.txt".into(),
+            blacklist_file: "config/blacklist.txt".into(),
+            whitelist_file: "config/whitelist.txt".into(),
+            final_file: "output/result.txt".into(),
+            epg_output_file: "output/epg/epg.xml".into(),
+            urls_limit: 5,
+            request_timeout: 10,
+            ipv_type: "all".into(),
+            ipv_type_prefer: Vec::new(),
+            origin_type_prefer: Vec::new(),
+            iptv_source_prefer: Vec::new(),
+            iptv_source_filter: Vec::new(),
+            default_user_agent: "iptv-rs/0.1".into(),
+            http_proxy: None,
+            logo_dir: "config/logo".into(),
+            local_logo_base_url: None,
+            logo_url: None,
+            logo_type: "png".into(),
+        }
+    }
 
     #[test]
     fn parses_txt_groups_and_urls() {
@@ -481,6 +569,7 @@ mod tests {
             false,
             0,
             None,
+            false,
         );
 
         assert_eq!(items.len(), 2);
@@ -500,6 +589,7 @@ http://a/cctv1.m3u8
             false,
             0,
             Some("sub-a"),
+            true,
         );
 
         assert_eq!(items.len(), 1);
@@ -510,5 +600,117 @@ http://a/cctv1.m3u8
             items[0].stream.as_ref().unwrap().iptv_source.as_deref(),
             Some("sub-a")
         );
+        assert!(items[0].stream.as_ref().unwrap().iptv_restricted);
+    }
+
+    #[test]
+    fn filters_restricted_iptv_sources_and_keeps_public_sources() {
+        let mut settings = test_settings(PathBuf::from("."));
+        settings.iptv_source_filter = vec!["sh-unicom".into()];
+        settings.iptv_source_prefer = settings.iptv_source_filter.clone();
+        let items = vec![
+            parsed_stream(
+                "CCTV-1",
+                "http://zj.test/live.m3u8",
+                Some("zj-telecom"),
+                true,
+            ),
+            parsed_stream("CCTV-1", "http://public.test/live.m3u8", None, false),
+            parsed_stream(
+                "CCTV-1",
+                "http://sh.test/live.m3u8",
+                Some("sh-unicom"),
+                true,
+            ),
+        ];
+
+        let mut channels = aggregate_channels(
+            items,
+            &settings,
+            &AliasMatcher::default(),
+            &FilterRules::default(),
+        );
+        apply_output_preferences(&mut channels, &settings);
+
+        let urls: Vec<&str> = channels[0]
+            .streams
+            .iter()
+            .map(|stream| stream.url.as_str())
+            .collect();
+        assert_eq!(
+            urls,
+            vec!["http://sh.test/live.m3u8", "http://public.test/live.m3u8"]
+        );
+    }
+
+    #[test]
+    fn loads_local_source_list_with_explicit_iptv_labels() {
+        let root =
+            std::env::temp_dir().join(format!("iptv-rs-local-sources-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sources")).unwrap();
+        std::fs::write(
+            root.join("sources/sh.txt"),
+            "CCTV-1,http://sh.test/live.m3u8\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("sources/zj.txt"),
+            "CCTV-1,http://zj.test/live.m3u8\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("sources/public.txt"),
+            "CCTV-1,http://public.test/live.m3u8\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("local_sources.txt"),
+            "sources/sh.txt IPTV=\"sh-unicom\"\nsources/zj.txt IPTV=\"zj-telecom\"\nsources/public.txt\n",
+        )
+        .unwrap();
+
+        let mut settings = test_settings(root.clone());
+        settings.local_source_list_file = "local_sources.txt".into();
+        settings.iptv_source_filter = vec!["sh-unicom".into()];
+        settings.iptv_source_prefer = settings.iptv_source_filter.clone();
+
+        let items = load_local_sources(&settings).unwrap();
+        let streams: Vec<_> = items
+            .iter()
+            .filter_map(|item| item.stream.as_ref())
+            .collect();
+
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].iptv_source.as_deref(), Some("sh-unicom"));
+        assert!(streams[0].iptv_restricted);
+        assert_eq!(streams[1].iptv_source, None);
+        assert!(!streams[1].iptv_restricted);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn parsed_stream(
+        name: &str,
+        url: &str,
+        iptv_source: Option<&str>,
+        iptv_restricted: bool,
+    ) -> ParsedChannel {
+        ParsedChannel {
+            name: name.into(),
+            group: Some("测试".into()),
+            tvg_id: None,
+            logo: None,
+            stream: Some(Stream {
+                url: url.into(),
+                origin: Origin::Subscribe,
+                whitelist: false,
+                source_order: 0,
+                iptv_source: iptv_source.map(ToString::to_string),
+                iptv_restricted,
+                ipv_type: infer_ipv_type(url),
+            }),
+            order: order_for_origin(Origin::Subscribe, 0),
+        }
     }
 }

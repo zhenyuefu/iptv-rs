@@ -2,7 +2,8 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::models::{Channel, IpvType, Origin, Stream};
 
-const HEADER: &str = "iptv-rs-metadata-v1";
+const HEADER: &str = "iptv-rs-metadata-v2";
+const LEGACY_HEADER: &str = "iptv-rs-metadata-v1";
 
 pub fn channels_to_metadata_bytes(channels: &[Channel]) -> Vec<u8> {
     let mut output = String::new();
@@ -31,6 +32,7 @@ pub fn channels_to_metadata_bytes(channels: &[Channel]) -> Vec<u8> {
                     stream.whitelist.to_string(),
                     stream.source_order.to_string(),
                     encode_option(stream.iptv_source.as_deref()),
+                    stream.iptv_restricted.to_string(),
                     stream.ipv_type.as_str().to_string(),
                 ],
             );
@@ -44,7 +46,7 @@ pub fn channels_from_metadata_bytes(bytes: &[u8]) -> Result<Vec<Channel>> {
     let text = std::str::from_utf8(bytes).context("result metadata must be utf-8")?;
     let mut lines = text.lines();
     let header = lines.next().unwrap_or_default();
-    if header != HEADER {
+    if header != HEADER && header != LEGACY_HEADER {
         return Err(anyhow!("unsupported result metadata format `{header}`"));
     }
 
@@ -88,9 +90,19 @@ fn parse_channel(fields: &[&str]) -> Result<Channel> {
 }
 
 fn parse_stream(fields: &[&str]) -> Result<Stream> {
-    if fields.len() != 7 {
+    if fields.len() != 7 && fields.len() != 8 {
         return Err(anyhow!("stream metadata row has {} fields", fields.len()));
     }
+    let (iptv_restricted, ipv_type) = if fields.len() == 8 {
+        (
+            fields[6]
+                .parse()
+                .with_context(|| format!("invalid IPTV restricted flag `{}`", fields[6]))?,
+            parse_ipv_type(fields[7]),
+        )
+    } else {
+        (false, parse_ipv_type(fields[6]))
+    };
     Ok(Stream {
         url: decode(fields[1])?,
         origin: parse_origin(fields[2])?,
@@ -101,7 +113,8 @@ fn parse_stream(fields: &[&str]) -> Result<Stream> {
             .parse()
             .with_context(|| format!("invalid source order `{}`", fields[4]))?,
         iptv_source: decode_option(fields[5])?,
-        ipv_type: parse_ipv_type(fields[6]),
+        iptv_restricted,
+        ipv_type,
     })
 }
 
@@ -220,6 +233,7 @@ mod tests {
                 whitelist: false,
                 source_order: 1,
                 iptv_source: Some("home".into()),
+                iptv_restricted: true,
                 ipv_type: IpvType::Ipv4,
             }],
             order: 7,
@@ -229,5 +243,18 @@ mod tests {
         let decoded = channels_from_metadata_bytes(&bytes).unwrap();
 
         assert_eq!(decoded, channels);
+    }
+
+    #[test]
+    fn reads_legacy_metadata_without_restricted_flag() {
+        let decoded = channels_from_metadata_bytes(
+            b"iptv-rs-metadata-v1\nC\tCCTV-1\t\t\t\t1\nS\thttp://a.test/live.m3u8\tlocal\tfalse\t0\thome\tipv4\n",
+        )
+        .unwrap();
+
+        let stream = &decoded[0].streams[0];
+        assert_eq!(stream.iptv_source.as_deref(), Some("home"));
+        assert!(!stream.iptv_restricted);
+        assert_eq!(stream.ipv_type, IpvType::Ipv4);
     }
 }

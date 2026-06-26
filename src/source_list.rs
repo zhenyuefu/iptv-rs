@@ -13,6 +13,7 @@ pub struct SourceEntry {
     pub url: String,
     pub user_agent: Option<String>,
     pub iptv_source: Option<String>,
+    pub iptv_restricted: bool,
     pub section: SourceSection,
     pub enabled: bool,
 }
@@ -92,6 +93,7 @@ pub fn parse_source_list(text: &str) -> Vec<SourceEntry> {
                 url,
                 user_agent: parsed.user_agent,
                 iptv_source: parsed.iptv_source,
+                iptv_restricted: parsed.iptv_restricted,
                 section,
                 enabled,
             });
@@ -102,12 +104,27 @@ pub fn parse_source_list(text: &str) -> Vec<SourceEntry> {
 }
 
 fn looks_like_source_line(line: &str) -> bool {
-    line.starts_with("http://")
-        || line.starts_with("https://")
-        || line.starts_with("file://")
-        || line.starts_with('/')
-        || line.starts_with("./")
-        || line.starts_with("../")
+    let path = line.split_whitespace().next().unwrap_or_default();
+    path.starts_with("http://")
+        || path.starts_with("https://")
+        || path.starts_with("file://")
+        || path.starts_with('/')
+        || path.starts_with("./")
+        || path.starts_with("../")
+        || has_known_source_extension(path)
+}
+
+fn has_known_source_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "txt" | "m3u" | "m3u8" | "xml" | "gz"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Default)]
@@ -115,6 +132,7 @@ struct ParsedSourceLine {
     url: String,
     user_agent: Option<String>,
     iptv_source: Option<String>,
+    iptv_restricted: bool,
 }
 
 fn parse_source_line(line: &str) -> ParsedSourceLine {
@@ -133,7 +151,11 @@ fn parse_source_line(line: &str) -> ParsedSourceLine {
     for (key, value) in parse_options(options) {
         match key.to_ascii_lowercase().as_str() {
             "ua" | "useragent" | "user-agent" => parsed.user_agent = Some(value),
-            "iptv" | "iptv_source" | "iptv-source" | "source" => parsed.iptv_source = Some(value),
+            "iptv" | "iptv_source" | "iptv-source" => {
+                parsed.iptv_source = Some(value);
+                parsed.iptv_restricted = true;
+            }
+            "source" => parsed.iptv_source = Some(value),
             _ => {}
         }
     }
@@ -217,9 +239,29 @@ https://b.test/live.txt UA=AgentB
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].user_agent.as_deref(), Some("Agent A"));
         assert_eq!(entries[0].iptv_source.as_deref(), Some("home"));
+        assert!(entries[0].iptv_restricted);
         assert_eq!(entries[0].section, SourceSection::Default);
         assert_eq!(entries[1].user_agent.as_deref(), Some("AgentB"));
         assert_eq!(entries[1].iptv_source, None);
+        assert!(!entries[1].iptv_restricted);
         assert_eq!(entries[1].section, SourceSection::Whitelist);
+    }
+
+    #[test]
+    fn parses_local_paths_and_plain_source_labels() {
+        let entries = parse_source_list(
+            r#"
+config/local/sh-unicom.m3u IPTV="sh-unicom"
+file:///data/public.txt SOURCE=public
+"#,
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].url, "config/local/sh-unicom.m3u");
+        assert_eq!(entries[0].iptv_source.as_deref(), Some("sh-unicom"));
+        assert!(entries[0].iptv_restricted);
+        assert_eq!(entries[1].url, "file:///data/public.txt");
+        assert_eq!(entries[1].iptv_source.as_deref(), Some("public"));
+        assert!(!entries[1].iptv_restricted);
     }
 }

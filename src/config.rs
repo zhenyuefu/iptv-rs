@@ -26,8 +26,7 @@ pub struct Settings {
     pub public_domain: String,
     pub public_port: u16,
     pub source_file: PathBuf,
-    pub local_file: PathBuf,
-    pub local_dir: PathBuf,
+    pub local_source_list_file: PathBuf,
     pub subscribe_file: PathBuf,
     pub epg_file: PathBuf,
     pub alias_file: PathBuf,
@@ -41,6 +40,7 @@ pub struct Settings {
     pub ipv_type_prefer: Vec<String>,
     pub origin_type_prefer: Vec<String>,
     pub iptv_source_prefer: Vec<String>,
+    pub iptv_source_filter: Vec<String>,
     pub default_user_agent: String,
     pub http_proxy: Option<String>,
     pub logo_dir: PathBuf,
@@ -56,6 +56,11 @@ impl Settings {
             .with_context(|| format!("failed to read config file {}", path.display()))?;
         let mut values = parse_ini_settings(&text);
         apply_env_overrides(&mut values);
+        let iptv_source_filter = get_list(&values, "iptv_source_filter");
+        let mut iptv_source_prefer = get_list(&values, "iptv_source_prefer");
+        if iptv_source_prefer.is_empty() {
+            iptv_source_prefer = iptv_source_filter.clone();
+        }
 
         Ok(Self {
             root,
@@ -88,8 +93,11 @@ impl Settings {
                 .unwrap_or_else(|| "127.0.0.1".to_string()),
             public_port: get_u16(&values, "public_port", 80),
             source_file: get_path(&values, "source_file", "config/demo.txt"),
-            local_file: get_path(&values, "local_file", "config/local.txt"),
-            local_dir: get_path(&values, "local_dir", "config/local"),
+            local_source_list_file: get_path(
+                &values,
+                "local_source_list_file",
+                "config/local_sources.txt",
+            ),
             subscribe_file: get_path(&values, "subscribe_file", "config/subscribe.txt"),
             epg_file: get_path(&values, "epg_file", "config/epg.txt"),
             alias_file: get_path(&values, "alias_file", "config/alias.txt"),
@@ -105,7 +113,8 @@ impl Settings {
                 .unwrap_or_else(|| "all".to_string()),
             ipv_type_prefer: get_list(&values, "ipv_type_prefer"),
             origin_type_prefer: get_list(&values, "origin_type_prefer"),
-            iptv_source_prefer: get_list(&values, "iptv_source_prefer"),
+            iptv_source_prefer,
+            iptv_source_filter,
             default_user_agent: values
                 .get("default_user_agent")
                 .cloned()
@@ -176,8 +185,7 @@ fn apply_env_overrides(values: &mut HashMap<String, String>) {
                 | "public_domain"
                 | "public_port"
                 | "source_file"
-                | "local_file"
-                | "local_dir"
+                | "local_source_list_file"
                 | "subscribe_file"
                 | "epg_file"
                 | "alias_file"
@@ -191,6 +199,7 @@ fn apply_env_overrides(values: &mut HashMap<String, String>) {
                 | "ipv_type_prefer"
                 | "origin_type_prefer"
                 | "iptv_source_prefer"
+                | "iptv_source_filter"
                 | "default_user_agent"
                 | "http_proxy"
                 | "logo_dir"

@@ -202,6 +202,7 @@ mod tests {
                 whitelist: false,
                 source_order: 0,
                 iptv_source: None,
+                iptv_restricted: false,
                 ipv_type: crate::models::IpvType::Ipv4,
             }],
             order: 0,

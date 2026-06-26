@@ -23,7 +23,8 @@ use crate::logo::LogoResolver;
 use crate::metadata::channels_to_metadata_bytes;
 use crate::output::{write_m3u, write_txt};
 use crate::playlist::{
-    aggregate_channels, limit_channel_streams, load_local_sources, parse_playlist,
+    aggregate_channels, apply_output_preferences, limit_channel_streams, load_local_sources,
+    parse_playlist, source_iptv_allowed,
 };
 use crate::rules::{AliasMatcher, FilterRules};
 use crate::source_list::{SourceSection, disable_source_entry, parse_source_list_file};
@@ -181,6 +182,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         false,
         0,
         None,
+        false,
     )?;
     parsed_sources.extend(template);
 
@@ -199,6 +201,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
                 false,
                 0,
                 None,
+                false,
             )?);
         }
     }
@@ -208,6 +211,9 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         let subscriptions = parse_source_list_file(&subscribe_file)?;
         for (index, source) in subscriptions.into_iter().enumerate() {
             if !source.enabled || source.url.trim().is_empty() {
+                continue;
+            }
+            if !source_iptv_allowed(&source, &settings) {
                 continue;
             }
 
@@ -238,6 +244,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
                 source.is_whitelist(),
                 index,
                 source.iptv_source.as_deref(),
+                source.iptv_restricted,
             )?;
             if parsed.is_empty() && settings.open_auto_disable_source {
                 let _ = disable_source_entry(&subscribe_file, &source.url);
@@ -250,6 +257,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
     let logo_resolver = LogoResolver::new(&settings);
     logo_resolver.apply(&mut channels);
     let metadata_channels = channels.clone();
+    apply_output_preferences(&mut channels, &settings);
     limit_channel_streams(&mut channels, &settings);
 
     let final_path = settings.resolve(&settings.final_file);

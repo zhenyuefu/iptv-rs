@@ -1,0 +1,5 @@
+# 本地源列表，每行一个本地 txt/m3u/m3u8 文件路径
+# 显式 IPTV 标签表示运营商 IPTV 源，会按 iptv_source_filter 过滤:
+# config/local/sh-unicom.m3u IPTV="sh-unicom"
+# /data/public.txt
+# file:///data/zj-telecom.txt IPTV="zj-telecom"
