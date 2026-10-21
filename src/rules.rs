@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use regex::Regex;
+use fancy_regex::Regex;
 
 #[derive(Debug, Default)]
 pub struct AliasMatcher {
     primary_to_aliases: HashMap<String, Vec<String>>,
     alias_to_primary: HashMap<String, String>,
+    normalized_to_primary: HashMap<String, String>,
     patterns: Vec<(Regex, String)>,
 }
 
@@ -39,20 +40,22 @@ impl AliasMatcher {
                 .alias_to_primary
                 .insert(primary.clone(), primary.clone());
 
-            let mut aliases = Vec::new();
-            let formatted = format_name(&primary);
-            if formatted != primary {
-                aliases.push(formatted);
-            }
-            aliases.extend(parts.map(ToString::to_string));
+            matcher
+                .normalized_to_primary
+                .insert(format_name(&primary), primary.clone());
+            let aliases: Vec<String> = parts.map(ToString::to_string).collect();
 
             for alias in &aliases {
                 matcher
                     .alias_to_primary
                     .insert(alias.clone(), primary.clone());
                 if let Some(pattern) = alias.strip_prefix("re:") {
-                    if let Ok(regex) = Regex::new(pattern) {
-                        matcher.patterns.push((regex, primary.clone()));
+                    match Regex::new(pattern) {
+                        Ok(regex) => matcher.patterns.push((regex, primary.clone())),
+                        Err(error) => eprintln!(
+                            "invalid alias regex for {primary} in {}: {error}",
+                            path.display()
+                        ),
                     }
                 }
             }
@@ -68,7 +71,7 @@ impl AliasMatcher {
         }
 
         for (pattern, primary) in &self.patterns {
-            if pattern.is_match(name) {
+            if pattern.is_match(name).unwrap_or(false) {
                 return primary.clone();
             }
         }
@@ -76,6 +79,7 @@ impl AliasMatcher {
         let formatted = format_name(name);
         self.alias_to_primary
             .get(&formatted)
+            .or_else(|| self.normalized_to_primary.get(&formatted))
             .cloned()
             .unwrap_or_else(|| name.to_string())
     }
@@ -255,6 +259,60 @@ fn format_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_alias_catalog_is_usable() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/alias.txt");
+        let matcher = AliasMatcher::from_file(&path).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut pattern_count = 0;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('#') || !line.contains(',') {
+                continue;
+            }
+            let mut parts = line.split(',').map(str::trim);
+            let primary = parts.next().unwrap();
+            assert_eq!(matcher.primary_name(primary), primary);
+            for alias in parts.filter(|alias| !alias.is_empty()) {
+                if let Some(pattern) = alias.strip_prefix("re:") {
+                    Regex::new(pattern).unwrap_or_else(|error| {
+                        panic!("invalid bundled pattern for {primary}: {error}")
+                    });
+                    pattern_count += 1;
+                } else {
+                    assert_eq!(matcher.primary_name(alias), primary, "alias: {alias}");
+                }
+            }
+        }
+        assert!(pattern_count > 0);
+        assert_eq!(matcher.patterns.len(), pattern_count);
+    }
+
+    #[test]
+    fn bundled_aliases_keep_distinct_channels_separate() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/alias.txt");
+        let matcher = AliasMatcher::from_file(&path).unwrap();
+        for (input, expected) in [
+            ("cctv_01 [test feed]", "CCTV-1"),
+            ("CCTV5＋体育赛事", "CCTV-5+"),
+            ("CCTV4中文國際歐洲IPV6", "CCTV-4欧洲"),
+            ("CCTV4 America test feed", "CCTV-4美洲"),
+            ("CCTV-1綜合", "CCTV-1"),
+            ("4kfitness", "4K健身"),
+            ("TVB J1频道", "TVB J1"),
+            ("CCTV5P", "CCTV-5+"),
+            ("cctv1风云剧场", "风云剧场"),
+            ("CCTV-1未知频道", "CCTV-1未知频道"),
+            ("第一剧场", "第一剧场"),
+            ("风云剧场", "风云剧场"),
+            ("中国电影", "中国电影"),
+            ("翡翠", "翡翠台"),
+            ("翡翠台4K", "翡翠台4K"),
+            ("魅力潇湘", "NewTV魅力潇湘"),
+        ] {
+            assert_eq!(matcher.primary_name(input), expected, "input: {input}");
+        }
+    }
 
     #[test]
     fn alias_regex_maps_to_primary() {

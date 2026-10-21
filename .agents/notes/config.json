@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "lang": "en",
+  "classes": [
+    "feature",
+    "bug-fix",
+    "simplification",
+    "architecture",
+    "process",
+    "testing"
+  ]
+}
