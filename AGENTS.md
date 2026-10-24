@@ -77,13 +77,11 @@ cargo run -- serve --config config/config.ini
 - `src/service.rs`: built-in HTTP file service.
 - `src/source_list.rs`: subscription/EPG source-list parsing and auto-disable edits.
 
-<!-- agent-notes:begin -->
 ## Agent Notes
 
-Decisions and proposals that affect this codebase are recorded as **Agent Notes** under [`.agents/notes/`](.agents/notes/README.md) — the *why* and *what we gave up* that code and docs can't carry.
+[Agent Notes](.agents/notes/README.md) governs repository documents, plans, research, analysis, designs, guides and decisions.
 
-- **Non-trivial changes MUST add or update an Agent Note in the same change** (behavior, architecture, shared contracts, formats, process/tooling, testing strategy); only mechanical or local edits are exempt ([scope](.agents/notes/README.md#when-to-write-one)).
-- Check for an existing owner first — `node .agents/bin/agent-notes.js related <keywords>` — and update it rather than duplicating it.
-- Create with `node .agents/bin/agent-notes.js new <proposed|implemented> <class> "<title>"` (classes: `feature`, `bug-fix`, `simplification`, `architecture`, `process`, `testing`); `node .agents/bin/agent-notes.js verify` must pass before you finish.
-- `implemented/` notes are kept current with shipped facts; reversing a decision needs a new note. `archived/` is frozen history — never edit it or treat it as current authority.
-<!-- agent-notes:end -->
+- Update authoritative content in the same change as substantive work; do not add a duplicate ADR.
+- Search CE type=note or `node .agents/bin/agent-notes.js related <keywords>`, then read evidence to establish ownership.
+- Select one of six kinds by purpose. Small topics need not split. Use new --kind, show/write and transition; see the governance guide.
+- Distinguish evidence scope from shipped status. Archives and rejected decisions are frozen. Finish with `node .agents/bin/agent-notes.js verify`.

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "lang": "en",
   "classes": [
     "feature",
@@ -8,5 +8,10 @@
     "architecture",
     "process",
     "testing"
+  ],
+  "required_capability": "agent-notes/2",
+  "document_roots": [
+    "docs",
+    "README.md"
   ]
 }
