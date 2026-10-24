@@ -27,3 +27,7 @@ interrupted transactions; investigate a writer lock before recovery and preserve
 Finish with `node .agents/bin/agent-notes.js verify`. Mechanical verification cannot prove findings or semantic uniqueness.
 CE type=note searches all kinds; type=decision keeps its existing scope. Read evidence before use.
 Queued indexing is not completed sync/embedding.
+
+## 迁移后的入口
+
+2026-10-24 用户要求：迁移完成后修复可编辑引用并移除旧导航入口，只维护 topics 下的权威正文及其资产。原始路径仅保留在历史映射/来源元数据中；冻结记录不因外部文档迁移而改写。
