@@ -1,33 +1,31 @@
 # Agent Notes: repository knowledge
 
-Canonical content lives under topics/<topic> with agent-note/2 metadata. Legacy decisions keep
-paths and seals. Choose decision, plan, research, analysis, design or guide. A small topic needs
-only one Note. Update the existing owner; do not create a duplicate ADR to satisfy documentation.
-Plans own tasks/dependencies; designs own contracts; decisions own rationale; research/analysis
-own scoped evidence and findings; guides own operations. Link details instead of copying them.
-Declare HTML, images and evidence excerpts as assets; keep executable code in one location.
+Search CE with cwd, type=note and history=true, then read relevant owners. If unavailable,
+report it and use related --lexical. Update canonical content alongside substantive changes;
+a small topic needs one Note.
 
-Use `node .agents/bin/agent-notes.js new --kind research --topic playback --id player-research "Player investigation"`.
-Read show for content and SHA-256, then write with --content-file and --expected-sha256.
-Use transition for state changes, retaining paths. Frontmatter accepts top-level fields and JSON
-flow arrays/objects, without YAML tags, aliases or nested blocks. id and kind remain stable.
+Organize content under topics/<topic>/ with agent-note/2 metadata. Choose kind by purpose:
 
-States: decision proposed/implemented/rejected; plan planned/active/completed/cancelled;
-research/analysis draft/completed/cancelled; design draft/accepted/withdrawn;
-guide draft/current/obsolete/withdrawn. Completed research and accepted designs do not claim
-shipped behavior. New decisions/contracts supersede rather than rewrite earlier choices.
-Supersedes edges require scope: all or explicit owns keys. Optional owns keys have one effective
-owner; semantic duplication still requires reading. Archives seal content and assets in place;
-legacy seals stay intact. Rejected decisions are frozen. Archive only settled content.
+| kind | Owns | States |
+|---|---|---|
+| decision | Choice, rationale and trade-offs | proposed / implemented / rejected |
+| plan | Tasks, dependencies and progress | planned / active / completed / cancelled |
+| research / analysis | Scoped evidence, reasoning and conclusions | draft / completed / cancelled |
+| design | Contracts and verification | draft / accepted / withdrawn |
+| guide | Steps and troubleshooting | draft / current / obsolete / withdrawn |
 
-inventory lists ungoverned Markdown in configured document_roots (default docs).
-migrate <plan.json> --dry-run checks reviewed input digests and explicit outputs; --apply upgrades
-configuration in the same transaction. Never downgrade config to simulate rollback. recover handles
-interrupted transactions; investigate a writer lock before recovery and preserve concurrent edits.
-Finish with `node .agents/bin/agent-notes.js verify`. Mechanical verification cannot prove findings or semantic uniqueness.
-CE type=note searches all kinds; type=decision keeps its existing scope. Read evidence before use.
-Queued indexing is not completed sync/embedding.
+A proposal is a decision in proposed state; architecture is a decision class. Proposals own
+the choice and rationale. Split out a plan only when execution needs independent tracking;
+link the proposal/design instead of copying contracts or acceptance details. Completed plans
+or investigations and accepted designs do not prove shipped behavior.
 
-## 迁移后的入口
+Prefer the CE MCP notes_* tools: notes_get returns content, allowed transitions and an edit_id;
+notes_create writes the complete Note; notes_write/notes_transition/notes_relocate take the edit_id.
+Reread conflicts; read_id is only for evidence reads. Local CLI `node .agents/bin/agent-notes.js`: new --kind <kind> --topic <topic>
+--id <id> "title"; CLI show/write use its read_id.
+id and kind are stable; class applies only to decisions. Link details and declare assets with
+one owner. Correct facts in place; new choices declare supersedes with all or explicit owns scope.
 
-2026-10-24 用户要求：迁移完成后修复可编辑引用并移除旧导航入口，只维护 topics 下的权威正文及其资产。原始路径仅保留在历史映射/来源元数据中；冻结记录不因外部文档迁移而改写。
+Rejected decisions and archives freeze content and assets: never edit, move or delete them.
+Cancel or withdraw unfinished work before archiving. Finish with `node .agents/bin/agent-notes.js verify` and inspect
+the diff. Verification does not prove conclusions; queued indexing is not completed indexing.
