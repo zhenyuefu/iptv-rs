@@ -1,5 +1,7 @@
 target
 output
 .git
+.jj
+.jj-workspaces
 .DS_Store
 config/relay.json

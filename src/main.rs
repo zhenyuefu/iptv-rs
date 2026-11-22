@@ -46,6 +46,11 @@ enum Command {
         #[arg(short, long, default_value = "config/config.ini")]
         config: PathBuf,
     },
+    /// Serve HTTP media relay listeners independently of the channel updater.
+    Relay {
+        #[arg(long, default_value = "config/relay.json")]
+        relay_config: PathBuf,
+    },
     /// Run the updater and expose generated output files over HTTP.
     Serve {
         /// Path to config/config.ini.
@@ -58,11 +63,16 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    init_container_runtime()?;
-
     let cli = Cli::parse_from(args_with_config_env());
+    if !matches!(cli.command, Command::Relay { .. }) {
+        init_container_runtime()?;
+    }
 
     match cli.command {
+        Command::Relay { relay_config } => {
+            let runtime = relay::start(&relay_config)?;
+            runtime.block_on(std::future::pending())
+        }
         Command::Update { config } => run_update(config),
         Command::Serve {
             config,
@@ -82,15 +92,13 @@ fn args_with_config_env() -> Vec<OsString> {
     if args_has_config_flag(&args) {
         return args;
     }
-    let Some(command_index) = args
-        .iter()
-        .position(|arg| arg == OsStr::new("update") || arg == OsStr::new("serve"))
-    else {
+    let command = args.get(1).map(OsString::as_os_str);
+    if command != Some(OsStr::new("update")) && command != Some(OsStr::new("serve")) {
         return args;
-    };
+    }
 
-    args.insert(command_index + 1, OsString::from("--config"));
-    args.insert(command_index + 2, config_path);
+    args.insert(2, OsString::from("--config"));
+    args.insert(3, config_path);
     args
 }
 

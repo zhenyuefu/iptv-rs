@@ -80,7 +80,18 @@ docker run --name iptv-rs-relay --network host --restart unless-stopped \
   iptv-rs:relay serve --relay-config /iptv-rs/config/relay.json
 ```
 
-The existing Python services occupy 7080 and 7091 on the production NAS. Reusing those ports requires a separate cutover. The Rust implementation was validated locally using the real Unicom, AC5 and YSP sample channels, with the AC5 upstream reached through the existing NAS relay. The loopback integration test exercises the normal updater, two catalogue formats, HLS redirect/child/key rewriting, byte ranges, destination checks and concurrent MPEG-TS transfers.
+On the production NAS, iptv-api serves the LAN catalogue on 7080, the standalone Rust relay listens on 7091, and a separate `iptv-rs serve` instance publishes the three-source APTV catalogue and XMLTV guide on 7092. Use the aggregation endpoint for template categories and channel aliases. The Rust implementation was validated locally using the real Unicom, AC5 and YSP sample channels, with the AC5 upstream reached through the existing NAS relay. The loopback integration test exercises the normal updater, two catalogue formats, HLS redirect/child/key rewriting, byte ranges, destination checks and concurrent MPEG-TS transfers.
+
+### Standalone relay
+
+Use `iptv-rs relay --relay-config /etc/iptv-rs/relay.json` when another service already publishes the aggregated channel list. This command starts only the configured relay listeners. It runs without a config.ini, output directory or updater. For the standalone image, build the `relay` Dockerfile target and provide the JSON file on a read-only bind mount. On Linux, host networking allows binding the individual LAN, tailnet and Docker-gateway addresses.
+
+```sh
+docker build --target relay -t iptv-rs:relay-only .
+docker run -d --name iptv-rs-relay --restart unless-stopped --network host \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -v "$PWD/config/relay.json:/etc/iptv-rs/relay.json:ro" iptv-rs:relay-only
+```
 
 ## Docker
 

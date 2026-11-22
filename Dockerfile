@@ -6,6 +6,13 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked
 
+FROM scratch AS relay
+COPY --from=builder /usr/src/iptv-rs/target/release/iptv-rs /usr/local/bin/iptv-rs
+USER 65534:65534
+EXPOSE 7091
+ENTRYPOINT ["/usr/local/bin/iptv-rs"]
+CMD ["relay", "--relay-config", "/etc/iptv-rs/relay.json"]
+
 FROM scratch
 
 ARG APP_WORKDIR=/iptv-rs
