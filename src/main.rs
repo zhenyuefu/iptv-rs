@@ -6,6 +6,7 @@ mod metadata;
 mod models;
 mod output;
 mod playlist;
+mod relay;
 mod rules;
 mod service;
 mod source_list;
@@ -50,6 +51,9 @@ enum Command {
         /// Path to config/config.ini.
         #[arg(short, long, default_value = "config/config.ini")]
         config: PathBuf,
+        /// Enable additional HTTP media relay listeners described by this JSON file.
+        #[arg(long)]
+        relay_config: Option<PathBuf>,
     },
 }
 
@@ -60,7 +64,13 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Update { config } => run_update(config),
-        Command::Serve { config } => service::serve(config, run_update),
+        Command::Serve {
+            config,
+            relay_config,
+        } => {
+            let _relay = relay_config.as_deref().map(relay::start).transpose()?;
+            service::serve(config, run_update)
+        }
     }
 }
 

@@ -6,8 +6,8 @@
 `Guovin/iptv-api`. The source project is expected to be available at
 `../iptv-api` when comparing behavior locally.
 
-The intended alignment excludes local RTMP/HLS push/streaming and speed-test
-features.
+The optional HTTP pull relay serves existing upstream media. RTMP/HLS ingest,
+push, transcoding and speed testing remain outside upstream alignment.
 
 ## Implemented Scope
 
@@ -24,11 +24,12 @@ features.
 - Auto-disable failed or empty subscription/EPG sources when `open_auto_disable_source = True`.
 - Aggregate remote EPG XML/XML.GZ feeds with per-feed `UA="..."`.
 - Generate txt and m3u playlist outputs.
+- Optionally aggregate named HTTP sources on separate relay listeners and forward HLS or MPEG-TS to LAN and tailnet players.
 - Resolve channel logos from local files first, then fall back to configured remote logo base URL.
 
 ## Out Of Scope By Design
 
-- RTMP/HLS push or local streaming.
+- RTMP/HLS ingest, push, transcoding and locally generated media streams.
 - Speed testing and FFmpeg probing.
 - Web UI and GUI modes.
 - Speed-derived filters such as bitrate/resolution validation, geographic ISP probing,
@@ -75,6 +76,7 @@ cargo run -- serve --config config/config.ini
 - `src/output.rs`: txt/m3u output writers.
 - `src/epg.rs`: EPG aggregation and filtering.
 - `src/service.rs`: built-in HTTP file service.
+- `src/relay/`: asynchronous HTTP relay, source catalogues, and HLS resource rewriting.
 - `src/source_list.rs`: subscription/EPG source-list parsing and auto-disable edits.
 
 ## Agent Notes

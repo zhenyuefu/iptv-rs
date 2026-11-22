@@ -1,0 +1,12 @@
+{
+  "listeners": [
+    {"bind":"192.168.50.10:7091","public_base":"http://192.168.50.10:7091"},
+    {"bind":"100.64.0.10:7091","public_base":"http://100.64.0.10:7091"},
+    {"bind":"172.21.0.1:7091","public_base":"http://192.168.50.10:7091"}
+  ],
+  "sources": [
+    {"id":"unicom","group":"上海联通 IPTV","playlist":"https://cdn.jsdelivr.net/gh/xcc360/SHCU-TV@main/IPTV.txt","http_networks":["10.223.3.0/24","10.223.6.0/24"],"format":"hls"},
+    {"id":"ac5","group":"电信 IPTV（AC5）","playlist":"http://192.168.50.2:9999/playlist.m3u","origins":["http://192.168.50.2:9999"],"format":"ts"},
+    {"id":"ysp","group":"央视频（YSP）","playlist":"http://127.0.0.1:8767/all.m3u","origins":["http://127.0.0.1:8767","http://tlivecloud-playback-cdn.ysp.cctv.cn","https://tlivecloud-playback-cdn.ysp.cctv.cn"],"format":"hls"}
+  ]
+}

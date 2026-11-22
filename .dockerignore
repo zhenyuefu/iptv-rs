@@ -2,3 +2,4 @@ target
 output
 .git
 .DS_Store
+config/relay.json

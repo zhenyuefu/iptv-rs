@@ -59,6 +59,29 @@ Default routes:
 - `/info` -> public route list
 - `/health` -> health check
 
+## Optional HTTP relay for LAN and Tailscale
+
+The same `serve` process runs the scheduled channel/EPG aggregator on its regular HTTP port and optional asynchronous media listeners on separate addresses. Enable the listeners with a JSON file. A NAS-specific private copy can live at `config/relay.json`; Git and the Docker build context ignore this file. Mount it with your runtime configuration. The tracked [example](../../../../config/relay.example.json) shows three named sources and separate LAN, tailnet, and Docker-gateway listeners.
+
+```sh
+cargo run --release --locked -- serve --config config/config.ini --relay-config config/relay.json
+```
+
+- On the aggregation port, `/m3u`, `/txt`, and `/epg` retain template ordering, aliases, source filtering and scheduled output. For a full LAN playlist with relayed Unicom channels, add the relay's LAN or Docker-gateway `/unicom.txt` URL to `config/subscribe.txt` in the desired source section. Other LAN subscriptions continue through the usual aggregator.
+- On a relay listener, `/playlist.m3u` and `/m3u` combine only the named sources in JSON order. Each source has `/<id>.txt` and `/<id>.m3u`. Separate groups keep alternate feeds for the same station selectable. A listener's configured `public_base` determines channel URLs, including a Docker-gateway listener that advertises a LAN address.
+- A group specifies a TXT or M3U catalogue, a channel format (`hls` or `ts`), and exact allowed HTTP(S) origins or HTTP port-80 IP networks. Approve destinations used by both channels and their nested resources. Channel IDs follow the existing relay's SHA-256 of channel name and upstream path. HLS child manifests, segments, keys and maps pass through the relay. Media transfers stream with backpressure, HTTP ranges and bounded resource storage. Source catalogues refresh on demand after one hour and retain the last successful result on a transient failure. A cold source failure omits its group from the combined list, and a completely unavailable list returns HTTP 503.
+- On Linux/NAS with these host IP listeners, run the Docker image with host networking. Select unused service and relay ports for a side-by-side test. The aggregation port is controlled by `NGINX_HTTP_PORT` in the image, and relay ports by `listeners[].bind`. Use dedicated Rust config and output mounts. For example, from the project root on the Linux host:
+
+```sh
+docker build -t iptv-rs:relay .
+docker run --name iptv-rs-relay --network host --restart unless-stopped \
+  -e NGINX_HTTP_PORT=7080 \
+  -v "$PWD/config:/iptv-rs/config" -v "$PWD/output:/iptv-rs/output" \
+  iptv-rs:relay serve --relay-config /iptv-rs/config/relay.json
+```
+
+The existing Python services occupy 7080 and 7091 on the production NAS. Reusing those ports requires a separate cutover. The Rust implementation was validated locally using the real Unicom, AC5 and YSP sample channels, with the AC5 upstream reached through the existing NAS relay. The loopback integration test exercises the normal updater, two catalogue formats, HLS redirect/child/key rewriting, byte ranges, destination checks and concurrent MPEG-TS transfers.
+
 ## Docker
 
 ```sh
