@@ -82,7 +82,7 @@ impl Relay {
                 if !source.allows(&url) {
                     continue;
                 }
-                let key = identifier(&format!("{}|{}", entry.name, url.path()));
+                let key = channel_key(&entry.name, &url);
                 if table.urls.insert(key.clone(), url).is_none() {
                     table.rows.push((key, entry.name));
                 }
@@ -122,14 +122,7 @@ pub(super) async fn playlist(
         let Ok(table) = table else { continue };
         available = true;
         let source = &state.relay.sources[index];
-        let extension = if combined {
-            match source.format {
-                Format::Ts => ".ts",
-                Format::Hls => ".m3u8",
-            }
-        } else {
-            ""
-        };
+        let extension = if combined { source.format.suffix() } else { "" };
         for (key, name) in &table.rows {
             use std::fmt::Write;
             if plain {

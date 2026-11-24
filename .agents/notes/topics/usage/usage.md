@@ -82,6 +82,24 @@ docker run --name iptv-rs-relay --network host --restart unless-stopped \
 
 On the production NAS, iptv-api serves the LAN catalogue on 7080, the standalone Rust relay listens on 7091, and a separate `iptv-rs serve` instance publishes the three-source APTV catalogue and XMLTV guide on 7092. Use the aggregation endpoint for template categories and channel aliases. The Rust implementation was validated locally using the real Unicom, AC5 and YSP sample channels, with the AC5 upstream reached through the existing NAS relay. The loopback integration test exercises the normal updater, two catalogue formats, HLS redirect/child/key rewriting, byte ranges, destination checks and concurrent MPEG-TS transfers.
 
+### Native network playlists
+
+For a shared subscription catalogue, label the upstream entries in `subscribe.txt` with `Source="..."` matching the relay source IDs. Add a `profiles` array alongside `sources` and `listeners` in the relay JSON. For example:
+
+```json
+{
+  "name": "home-a",
+  "source_order": ["a", "b"],
+  "relay_sources": ["b"],
+  "relay_base": "http://192.0.2.10:7091",
+  "epg_url": "http://192.0.2.10:7092/epg"
+}
+```
+
+Each array entry publishes `/output/<name>.m3u` on the aggregation port. Set the public relay and optional XMLTV URLs to addresses reachable by that network's players. A reverse proxy can also expose these endpoints on a router. The updater uses the existing template, aliases, logos, source preference and URL limit. Only streams from listed source IDs appear. Direct stream URLs stay intact, including their query parameters. Relayed streams use the original upstream channel name and URL path to find an actual entry in that source's allowed relay catalogue.
+
+Profiles refresh on the normal aggregation schedule and on `iptv-rs update --config config/config.ini --relay-config config/relay.json`. The one-shot command does not bind listeners. A complete profile replaces its previous file atomically. Missing sources or unmatched relay entries leave the previous profile available and report an update error.
+
 ### Standalone relay
 
 Use `iptv-rs relay --relay-config /etc/iptv-rs/relay.json` when another service already publishes the aggregated channel list. This command starts only the configured relay listeners. It runs without a config.ini, output directory or updater. For the standalone image, build the `relay` Dockerfile target and provide the JSON file on a read-only bind mount. On Linux, host networking allows binding the individual LAN, tailnet and Docker-gateway addresses.

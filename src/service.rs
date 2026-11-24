@@ -15,7 +15,7 @@ use crate::models::Channel;
 use crate::output::{render_m3u, render_txt};
 use crate::playlist::{apply_output_preferences, limit_channel_streams};
 
-type UpdateFn = fn(PathBuf) -> Result<()>;
+type UpdateFn = Box<dyn Fn(PathBuf) -> Result<()> + Send>;
 
 pub fn serve(config_path: PathBuf, update: UpdateFn) -> Result<()> {
     let settings = Settings::from_file(&config_path)?;
@@ -24,7 +24,7 @@ pub fn serve(config_path: PathBuf, update: UpdateFn) -> Result<()> {
     }
 
     if settings.update_startup {
-        run_update_without_stopping_service(&config_path, update);
+        run_update_without_stopping_service(&config_path, &update);
     }
 
     if settings.update_interval > 0 {
@@ -58,12 +58,12 @@ fn spawn_update_loop(config_path: PathBuf, interval_hours: u64, update: UpdateFn
         let interval = Duration::from_secs(interval_hours.saturating_mul(3600));
         loop {
             thread::sleep(interval);
-            run_update_without_stopping_service(&config_path, update);
+            run_update_without_stopping_service(&config_path, &update);
         }
     });
 }
 
-fn run_update_without_stopping_service(config_path: &Path, update: UpdateFn) {
+fn run_update_without_stopping_service(config_path: &Path, update: &UpdateFn) {
     eprintln!("starting IPTV output update");
     match update(config_path.to_path_buf()) {
         Ok(()) => eprintln!("IPTV output update finished"),
@@ -234,14 +234,14 @@ fn write_generated(
             "text/plain; charset=utf-8"
         }
         GeneratedFormat::M3u => {
-            render_m3u(&mut body, &channels)?;
+            render_m3u(&mut body, &channels, None)?;
             "audio/x-mpegurl; charset=utf-8"
         }
     };
     write_response(stream, 200, content_type, &body)
 }
 
-fn generated_settings(settings: &Settings, preferred_sources: &[String]) -> Settings {
+pub(crate) fn generated_settings(settings: &Settings, preferred_sources: &[String]) -> Settings {
     let mut dynamic_settings = settings.clone();
     dynamic_settings.iptv_source_filter = preferred_sources.to_vec();
     dynamic_settings.iptv_source_prefer = preferred_sources.to_vec();

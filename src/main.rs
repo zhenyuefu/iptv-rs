@@ -45,6 +45,9 @@ enum Command {
         /// Path to config/config.ini.
         #[arg(short, long, default_value = "config/config.ini")]
         config: PathBuf,
+        /// Also export the network playlists defined in this relay configuration.
+        #[arg(long)]
+        relay_config: Option<PathBuf>,
     },
     /// Serve HTTP media relay listeners independently of the channel updater.
     Relay {
@@ -70,16 +73,31 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Relay { relay_config } => {
-            let runtime = relay::start(&relay_config)?;
-            runtime.block_on(std::future::pending())
+            let relay = relay::open(&relay_config, true)?;
+            relay.runtime.block_on(std::future::pending())
         }
-        Command::Update { config } => run_update(config),
+        Command::Update {
+            config,
+            relay_config,
+        } => {
+            let relay = relay_config
+                .as_deref()
+                .map(|p| relay::open(p, false))
+                .transpose()?;
+            run_update(config, relay.as_ref())
+        }
         Command::Serve {
             config,
             relay_config,
         } => {
-            let _relay = relay_config.as_deref().map(relay::start).transpose()?;
-            service::serve(config, run_update)
+            let relay = relay_config
+                .as_deref()
+                .map(|p| relay::open(p, true))
+                .transpose()?;
+            service::serve(
+                config,
+                Box::new(move |path| run_update(path, relay.as_ref())),
+            )
         }
     }
 }
@@ -177,7 +195,7 @@ fn copy_missing_config_entry(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_update(config_path: PathBuf) -> Result<()> {
+fn run_update(config_path: PathBuf, relay: Option<&relay::RunningRelay>) -> Result<()> {
     let settings = Settings::from_file(&config_path)?;
     if !settings.open_update {
         eprintln!("open_update is false; skipping update");
@@ -271,6 +289,7 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         }
     }
 
+    let keys = relay.map(|r| r.profile_keys(&parsed_sources));
     let mut channels = aggregate_channels(parsed_sources, &settings, &aliases, &rules);
     let logo_resolver = LogoResolver::new(&settings);
     logo_resolver.apply(&mut channels);
@@ -290,6 +309,10 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         channels_to_metadata_bytes(&metadata_channels),
     )?;
 
+    let profiles = match (relay, keys) {
+        (Some(relay), Some(keys)) => relay.export_profiles(&settings, &metadata_channels, &keys),
+        _ => Ok(()),
+    };
     let epg_file = settings.resolve(&settings.epg_file);
     if settings.open_epg && epg_file.exists() {
         let mut aggregator = EpgAggregator::default();
@@ -320,5 +343,5 @@ fn run_update(config_path: PathBuf) -> Result<()> {
         aggregator.write_to(&settings.resolve(&settings.epg_output_file))?;
     }
 
-    Ok(())
+    profiles
 }

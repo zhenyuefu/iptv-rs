@@ -57,11 +57,19 @@ pub fn write_m3u(path: &Path, channels: &[Channel]) -> Result<()> {
     ensure_parent(path)?;
     let mut file =
         fs::File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
-    render_m3u(&mut file, channels)
+    render_m3u(&mut file, channels, None)
 }
 
-pub fn render_m3u<W: Write>(file: &mut W, channels: &[Channel]) -> Result<()> {
-    writeln!(file, "#EXTM3U")?;
+pub fn render_m3u<W: Write>(
+    file: &mut W,
+    channels: &[Channel],
+    epg: Option<&url::Url>,
+) -> Result<()> {
+    if let Some(url) = epg {
+        writeln!(file, "#EXTM3U x-tvg-url=\"{}\"", escape_attr(url.as_str()))?;
+    } else {
+        writeln!(file, "#EXTM3U")?;
+    }
 
     for channel in channels
         .iter()

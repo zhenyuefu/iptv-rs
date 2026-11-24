@@ -1,6 +1,7 @@
 //! Optional media listeners alongside the aggregation service.
 mod catalog;
 mod media;
+mod profiles;
 
 use anyhow::{Context, Result, ensure};
 use axum::{Router, http::StatusCode, routing::get};
@@ -25,6 +26,8 @@ const GATEWAY: StatusCode = StatusCode::BAD_GATEWAY;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    #[serde(default)]
+    profiles: Vec<profiles::Profile>,
     listeners: Vec<Listener>,
     sources: Vec<Source>,
 }
@@ -88,6 +91,19 @@ impl Source {
             && url.port_or_known_default() == Some(80)
             && self.http_networks.iter().any(|net| net.contains(&address))
     }
+}
+
+impl Format {
+    fn suffix(&self) -> &'static str {
+        match self {
+            Self::Ts => ".ts",
+            Self::Hls => ".m3u8",
+        }
+    }
+}
+
+fn channel_key(name: &str, url: &Url) -> String {
+    identifier(&format!("{name}|{}", url.path()))
 }
 
 fn identifier(value: &str) -> String {
@@ -155,10 +171,17 @@ impl Config {
     }
 }
 
-pub fn start(path: &Path) -> Result<Runtime> {
+pub struct RunningRelay {
+    pub runtime: Runtime,
+    relay: Arc<Relay>,
+    profiles: Vec<profiles::Profile>,
+}
+
+pub fn open(path: &Path, listen: bool) -> Result<RunningRelay> {
     let cfg: Config =
         serde_json::from_slice(&std::fs::read(path)?).context("invalid relay config")?;
     cfg.validate()?;
+    profiles::validate(&cfg)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -185,7 +208,7 @@ pub fn start(path: &Path) -> Result<Runtime> {
     });
     runtime.block_on(async {
         let mut bound = Vec::new();
-        for listener in cfg.listeners {
+        for listener in cfg.listeners.into_iter().filter(|_| listen) {
             let socket = tokio::net::TcpListener::bind(listener.bind)
                 .await
                 .with_context(|| format!("binding relay {}", listener.bind))?;
@@ -209,5 +232,9 @@ pub fn start(path: &Path) -> Result<Runtime> {
         }
         Ok::<_, anyhow::Error>(())
     })?;
-    Ok(runtime)
+    Ok(RunningRelay {
+        runtime,
+        relay,
+        profiles: cfg.profiles,
+    })
 }
